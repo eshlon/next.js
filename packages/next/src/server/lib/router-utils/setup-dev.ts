@@ -103,7 +103,7 @@ import {
   TurboPackConnectedAction,
 } from '../../dev/hot-reloader-types'
 import { debounce } from '../../utils'
-import { AppPathsCollector } from '../app-paths-collector'
+import { AppPathsRoutes } from '../app-paths-routes'
 
 const wsServer = new ws.Server({ noServer: true })
 
@@ -163,7 +163,7 @@ async function startWatcher(opts: SetupOpts) {
   const serverFields: {
     actualMiddlewareFile?: string | undefined
     actualInstrumentationHookFile?: string | undefined
-    appPathRoutes?: Record<string, ReadonlyArray<string>>
+    appPathRoutes?: AppPathsRoutes
     middleware?:
       | {
           page: string
@@ -1315,7 +1315,7 @@ async function startWatcher(opts: SetupOpts) {
       let middlewareMatchers: MiddlewareMatcher[] | undefined
       const routedPages: string[] = []
       const knownFiles = wp.getTimeInfoEntries()
-      const appPaths = new AppPathsCollector()
+      const appPaths = new AppPathsRoutes()
       const pageNameSet = new Set<string>()
       const conflictingAppPagePaths = new Set<string>()
       const appPageFilePaths = new Map<string, string>()
@@ -1478,7 +1478,7 @@ async function startWatcher(opts: SetupOpts) {
 
           const originalPageName = pageName
           pageName = normalizeAppPath(pageName).replace(/%5F/g, '_')
-          appPaths.push(pageName, originalPageName)
+          appPaths.add(pageName, originalPageName)
 
           if (useFileSystemPublicRoutes) {
             appFiles.add(pageName)
@@ -1688,8 +1688,7 @@ async function startWatcher(opts: SetupOpts) {
         nestedMiddleware = []
       }
 
-      // Make sure to sort parallel routes to make the result deterministic.
-      serverFields.appPathRoutes = appPaths.toObject()
+      serverFields.appPathRoutes = appPaths
       await propagateToWorkers('appPathRoutes', serverFields.appPathRoutes)
 
       // TODO: pass this to fsChecker/next-dev-server?

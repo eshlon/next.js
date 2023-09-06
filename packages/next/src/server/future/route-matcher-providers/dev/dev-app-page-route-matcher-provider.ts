@@ -4,7 +4,7 @@ import { RouteKind } from '../../route-kind'
 import { FileCacheRouteMatcherProvider } from './file-cache-route-matcher-provider'
 import { DevAppNormalizers } from '../../normalizers/built/app'
 import { AppPageRouteDefinition } from '../../route-definitions/app-page-route-definition'
-import { AppPathsCollector } from '../../../lib/app-paths-collector'
+import { AppPathsRoutes } from '../../../lib/app-paths-routes'
 
 export class DevAppPageRouteMatcherProvider extends FileCacheRouteMatcherProvider<AppPageRouteMatcher> {
   private readonly expression: RegExp
@@ -27,7 +27,7 @@ export class DevAppPageRouteMatcherProvider extends FileCacheRouteMatcherProvide
   private prepare(files: ReadonlyArray<string>) {
     const routePages: Record<string, string> = {}
     const routePathnames: Array<string> = []
-    const routeAppPaths = new AppPathsCollector()
+    const routeAppPaths = new AppPathsRoutes()
     for (const filename of files) {
       // If the file isn't a match for this matcher, then skip it.
       if (!this.expression.test(filename)) continue
@@ -43,7 +43,7 @@ export class DevAppPageRouteMatcherProvider extends FileCacheRouteMatcherProvide
       const pathname = this.normalizers.pathname.normalize(filename)
 
       // Collect all the app paths for this page.
-      const collected = routeAppPaths.push(pathname, page)
+      const collected = routeAppPaths.add(pathname, page)
       if (collected === 1) {
         routePathnames.push(pathname)
       }

@@ -124,7 +124,7 @@ import {
 } from './web/spec-extension/adapters/next-request'
 import { matchNextDataPathname } from './lib/match-next-data-pathname'
 import getRouteFromAssetPath from '../shared/lib/router/utils/get-route-from-asset-path'
-import { AppPathsCollector } from './lib/app-paths-collector'
+import { AppPathsRoutes } from './lib/app-paths-routes'
 
 export type FindComponentsResult = {
   components: LoadComponentsReturnType
@@ -291,7 +291,7 @@ export default abstract class Server<ServerOptions extends Options = Options> {
     strictNextHead: boolean
   }
   protected readonly serverOptions: Readonly<ServerOptions>
-  private readonly appPathRoutes?: Record<string, ReadonlyArray<string>>
+  protected readonly appPathRoutes?: AppPathsRoutes
   protected readonly clientReferenceManifest?: ClientReferenceManifest
   protected nextFontManifest?: NextFontManifest
   private readonly responseCache: ResponseCacheBase
@@ -487,7 +487,10 @@ export default abstract class Server<ServerOptions extends Options = Options> {
 
     this.pagesManifest = this.getPagesManifest()
     this.appPathsManifest = this.getAppPathsManifest()
-    this.appPathRoutes = this.getAppPathRoutes()
+
+    if (this.appPathsManifest) {
+      this.appPathRoutes = this.getAppPathRoutes()
+    }
 
     // Configure the routes.
     this.matchers = this.getRouteMatchers()
@@ -1340,18 +1343,24 @@ export default abstract class Server<ServerOptions extends Options = Options> {
   // Backwards compatibility
   protected async close(): Promise<void> {}
 
-  private getAppPathRoutes(): Record<string, ReadonlyArray<string>> {
+  private getAppPathRoutes() {
     // If we don't have an appPathsManifest, we can't have any app paths.
-    if (!this.appPathsManifest) return {}
-
-    const collector = new AppPathsCollector()
-
-    for (const page of Object.keys(this.appPathsManifest)) {
-      collector.push(normalizeAppPath(page), page)
+    if (!this.appPathsManifest) {
+      throw new Error(
+        'Invariant: Expected appPathsManifest to be defined when calling getAppPathRoutes'
+      )
     }
 
-    return collector.toObject()
+    const collector = new AppPathsRoutes()
+
+    for (const page of Object.keys(this.appPathsManifest)) {
+      collector.add(normalizeAppPath(page), page)
+    }
+
+    return collector
   }
+
+  // private setAppPathRoutes
 
   protected async run(
     req: BaseNextRequest,
@@ -2477,40 +2486,21 @@ export default abstract class Server<ServerOptions extends Options = Options> {
     return path
   }
 
-  // map the route to the actual bundle name
-  protected getOriginalAppPaths(pathname: string) {
-    // If there is no app directory, it can't have app paths.
-    if (!this.hasAppDir || !this.appPathRoutes) return null
-
-    const appPaths = this.appPathRoutes[pathname]
-
-    if (!appPaths) return null
-
-    return appPaths
-  }
-
   protected async renderPageComponent(
     ctx: RequestContext,
     bubbleNoFallback: boolean
   ) {
     const { query, pathname } = ctx
 
-    const appPaths = this.getOriginalAppPaths(pathname)
-    const isAppPath = Array.isArray(appPaths)
-
-    let page = pathname
-    if (isAppPath) {
-      // the last item in the array is the root page, if there are parallel routes
-      page = appPaths[appPaths.length - 1]
-    }
+    const appPathRoute = this.appPathRoutes?.get(pathname)
 
     const result = await this.findPageComponents({
-      pathname: page,
+      pathname: appPathRoute?.page ?? pathname,
       query,
       params: ctx.renderOpts.params || {},
-      isAppPath,
+      isAppPath: !!appPathRoute,
       sriEnabled: !!this.nextConfig.experimental.sri?.algorithm,
-      appPaths,
+      appPaths: appPathRoute?.appPaths,
       // Ensuring for loading page component routes is done via the matcher.
       shouldEnsure: false,
     })

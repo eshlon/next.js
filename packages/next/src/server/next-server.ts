@@ -561,27 +561,22 @@ export default class NextNodeServer extends BaseServer {
   ) {
     const edgeFunctionsPages = this.getEdgeFunctionsPages() || []
     if (edgeFunctionsPages.length) {
-      const appPaths = this.getOriginalAppPaths(ctx.pathname)
-      const isAppPath = Array.isArray(appPaths)
-
-      let page = ctx.pathname
-      if (isAppPath) {
-        // When it's an array, we need to pass all parallel routes to the loader.
-        page = appPaths[appPaths.length - 1]
-      }
+      const appPathRoute = this.appPathRoutes?.get(ctx.pathname)
+      const page = appPathRoute?.page ?? ctx.pathname
 
       for (const edgeFunctionsPage of edgeFunctionsPages) {
-        if (edgeFunctionsPage === page) {
-          await this.runEdgeFunction({
-            req: ctx.req,
-            res: ctx.res,
-            query: ctx.query,
-            params: ctx.renderOpts.params,
-            page,
-            appPaths,
-          })
-          return null
-        }
+        if (edgeFunctionsPage !== page) continue
+
+        await this.runEdgeFunction({
+          req: ctx.req,
+          res: ctx.res,
+          query: ctx.query,
+          params: ctx.renderOpts.params,
+          page,
+          appPaths: appPathRoute?.appPaths ?? null,
+        })
+
+        return null
       }
     }
 

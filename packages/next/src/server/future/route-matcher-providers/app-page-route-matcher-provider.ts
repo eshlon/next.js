@@ -1,7 +1,7 @@
 import { isAppPageRoute } from '../../../lib/is-app-page-route'
 
 import { APP_PATHS_MANIFEST } from '../../../shared/lib/constants'
-import { AppPathsCollector } from '../../lib/app-paths-collector'
+import { AppPathsRoutes } from '../../lib/app-paths-routes'
 import { AppNormalizers } from '../normalizers/built/app'
 import { AppPageRouteDefinition } from '../route-definitions/app-page-route-definition'
 import { RouteKind } from '../route-kind'
@@ -27,13 +27,13 @@ export class AppPageRouteMatcherProvider extends ManifestRouteMatcherProvider<Ap
 
     // Collect all the app paths for each page. This could include any parallel
     // routes.
-    const routeAppPaths = new AppPathsCollector()
+    const routeAppPaths = new AppPathsRoutes()
     for (const page of pages) {
       const pathname = this.normalizers.pathname.normalize(page)
 
       // Collect all the app paths for this page. If this is the first time
       // we've seen this page, then add it to the list of route pathnames.
-      routeAppPaths.push(pathname, page)
+      routeAppPaths.add(pathname, page)
     }
 
     const definitions: Array<AppPageRouteDefinition> = []
