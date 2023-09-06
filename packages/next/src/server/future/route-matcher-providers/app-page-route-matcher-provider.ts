@@ -1,16 +1,15 @@
-import { isAppPageRoute } from '../../../lib/is-app-page-route'
-
-import { APP_PATHS_MANIFEST } from '../../../shared/lib/constants'
-import { AppPathsRoutes } from '../../lib/app-paths-routes'
-import { AppNormalizers } from '../normalizers/built/app'
-import { AppPageRouteDefinition } from '../route-definitions/app-page-route-definition'
-import { RouteKind } from '../route-kind'
-import { AppPageRouteMatcher } from '../route-matchers/app-page-route-matcher'
-import {
+import type {
   Manifest,
   ManifestLoader,
 } from './helpers/manifest-loaders/manifest-loader'
+
+import { isAppPageRoute } from '../../../lib/is-app-page-route'
+import { APP_PATHS_MANIFEST } from '../../../shared/lib/constants'
+import { AppRouteDefinitionBuilder } from './builders/app-route-definition-builder'
+import { AppNormalizers } from '../normalizers/built/app'
+import { AppPageRouteMatcher } from '../route-matchers/app-page-route-matcher'
 import { ManifestRouteMatcherProvider } from './manifest-route-matcher-provider'
+import { isAppPageRouteDefinition } from '../route-definitions/app-page-route-definition'
 
 export class AppPageRouteMatcherProvider extends ManifestRouteMatcherProvider<AppPageRouteMatcher> {
   private readonly normalizers: AppNormalizers
@@ -27,31 +26,16 @@ export class AppPageRouteMatcherProvider extends ManifestRouteMatcherProvider<Ap
 
     // Collect all the app paths for each page. This could include any parallel
     // routes.
-    const routeAppPaths = new AppPathsRoutes()
+    const appRoutes = new AppRouteDefinitionBuilder()
     for (const page of pages) {
-      const pathname = this.normalizers.pathname.normalize(page)
+      const filename = this.normalizers.filename.normalize(manifest[page])
 
       // Collect all the app paths for this page. If this is the first time
       // we've seen this page, then add it to the list of route pathnames.
-      routeAppPaths.add(pathname, page)
+      appRoutes.add(page, filename)
     }
 
-    const definitions: Array<AppPageRouteDefinition> = []
-    for (const { pathname, page, appPaths } of routeAppPaths.toSortedArray()) {
-      const filename = this.normalizers.filename.normalize(manifest[page])
-      const bundlePath = this.normalizers.bundlePath.normalize(page)
-
-      definitions.push({
-        kind: RouteKind.APP_PAGE,
-        pathname,
-        page,
-        bundlePath,
-        filename,
-        appPaths,
-      })
-    }
-
-    return definitions
+    return appRoutes.toSortedDefinitions().filter(isAppPageRouteDefinition)
   }
 
   protected async transform(

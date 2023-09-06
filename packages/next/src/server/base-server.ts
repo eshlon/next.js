@@ -76,10 +76,7 @@ import {
 
 import { ImageConfigComplete } from '../shared/lib/image-config'
 import { removePathPrefix } from '../shared/lib/router/utils/remove-path-prefix'
-import {
-  normalizeAppPath,
-  normalizeRscPath,
-} from '../shared/lib/router/utils/app-paths'
+import { normalizeRscPath } from '../shared/lib/router/utils/app-paths'
 import { getHostname } from '../shared/lib/get-hostname'
 import { parseUrl as parseUrlUtil } from '../shared/lib/router/utils/parse-url'
 import { getNextPathnameInfo } from '../shared/lib/router/utils/get-next-pathname-info'
@@ -124,7 +121,8 @@ import {
 } from './web/spec-extension/adapters/next-request'
 import { matchNextDataPathname } from './lib/match-next-data-pathname'
 import getRouteFromAssetPath from '../shared/lib/router/utils/get-route-from-asset-path'
-import { AppPathsRoutes } from './lib/app-paths-routes'
+import { AppRouteDefinitionBuilder } from './future/route-matcher-providers/builders/app-route-definition-builder'
+import { isAppPageRouteDefinition } from './future/route-definitions/app-page-route-definition'
 
 export type FindComponentsResult = {
   components: LoadComponentsReturnType
@@ -291,7 +289,7 @@ export default abstract class Server<ServerOptions extends Options = Options> {
     strictNextHead: boolean
   }
   protected readonly serverOptions: Readonly<ServerOptions>
-  protected readonly appPathRoutes?: AppPathsRoutes
+  protected appRoutes?: AppRouteDefinitionBuilder
   protected readonly clientReferenceManifest?: ClientReferenceManifest
   protected nextFontManifest?: NextFontManifest
   private readonly responseCache: ResponseCacheBase
@@ -487,10 +485,7 @@ export default abstract class Server<ServerOptions extends Options = Options> {
 
     this.pagesManifest = this.getPagesManifest()
     this.appPathsManifest = this.getAppPathsManifest()
-
-    if (this.appPathsManifest) {
-      this.appPathRoutes = this.getAppPathRoutes()
-    }
+    this.reloadAppPathRoutes()
 
     // Configure the routes.
     this.matchers = this.getRouteMatchers()
@@ -506,6 +501,14 @@ export default abstract class Server<ServerOptions extends Options = Options> {
 
   protected reloadMatchers() {
     return this.matchers.reload()
+  }
+
+  protected reloadAppPathRoutes() {
+    if (!this.appPathsManifest) return
+
+    this.appRoutes = AppRouteDefinitionBuilder.fromManifest(
+      this.appPathsManifest
+    )
   }
 
   protected async handleNextDataRequest(
@@ -1342,25 +1345,6 @@ export default abstract class Server<ServerOptions extends Options = Options> {
 
   // Backwards compatibility
   protected async close(): Promise<void> {}
-
-  private getAppPathRoutes() {
-    // If we don't have an appPathsManifest, we can't have any app paths.
-    if (!this.appPathsManifest) {
-      throw new Error(
-        'Invariant: Expected appPathsManifest to be defined when calling getAppPathRoutes'
-      )
-    }
-
-    const collector = new AppPathsRoutes()
-
-    for (const page of Object.keys(this.appPathsManifest)) {
-      collector.add(normalizeAppPath(page), page)
-    }
-
-    return collector
-  }
-
-  // private setAppPathRoutes
 
   protected async run(
     req: BaseNextRequest,
@@ -2492,15 +2476,18 @@ export default abstract class Server<ServerOptions extends Options = Options> {
   ) {
     const { query, pathname } = ctx
 
-    const appPathRoute = this.appPathRoutes?.get(pathname)
+    const appRoute = this.appRoutes?.get(pathname) ?? null
 
     const result = await this.findPageComponents({
-      pathname: appPathRoute?.page ?? pathname,
+      pathname: appRoute?.page ?? pathname,
       query,
       params: ctx.renderOpts.params || {},
-      isAppPath: !!appPathRoute,
+      isAppPath: appRoute !== null,
       sriEnabled: !!this.nextConfig.experimental.sri?.algorithm,
-      appPaths: appPathRoute?.appPaths,
+      appPaths:
+        appRoute && isAppPageRouteDefinition(appRoute)
+          ? appRoute.appPaths
+          : null,
       // Ensuring for loading page component routes is done via the matcher.
       shouldEnsure: false,
     })

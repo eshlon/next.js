@@ -101,6 +101,7 @@ import { NEXT_RSC_UNION_QUERY } from '../client/components/app-router-headers'
 import { signalFromNodeResponse } from './web/spec-extension/adapters/next-request'
 import { RouteModuleLoader } from './future/helpers/module-loader/route-module-loader'
 import { loadManifest } from './load-manifest'
+import { isAppPageRouteDefinition } from './future/route-definitions/app-page-route-definition'
 
 export * from './base-server'
 
@@ -561,8 +562,8 @@ export default class NextNodeServer extends BaseServer {
   ) {
     const edgeFunctionsPages = this.getEdgeFunctionsPages() || []
     if (edgeFunctionsPages.length) {
-      const appPathRoute = this.appPathRoutes?.get(ctx.pathname)
-      const page = appPathRoute?.page ?? ctx.pathname
+      const appRoute = this.appRoutes?.get(ctx.pathname)
+      const page = appRoute?.page ?? ctx.pathname
 
       for (const edgeFunctionsPage of edgeFunctionsPages) {
         if (edgeFunctionsPage !== page) continue
@@ -573,7 +574,10 @@ export default class NextNodeServer extends BaseServer {
           query: ctx.query,
           params: ctx.renderOpts.params,
           page,
-          appPaths: appPathRoute?.appPaths ?? null,
+          appPaths:
+            appRoute && isAppPageRouteDefinition(appRoute)
+              ? appRoute.appPaths
+              : null,
         })
 
         return null
