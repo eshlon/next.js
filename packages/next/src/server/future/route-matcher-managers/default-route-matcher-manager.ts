@@ -14,6 +14,7 @@ import {
 } from '../normalizers/match-options-normalizer'
 import { groupMatcherResults } from './helpers/group-matcher-results'
 import { sortDynamicMatchers } from './helpers/sort-dynamic-matchers'
+import { extendInvokedRouteMatch } from '../route-matches/invoked-route-match'
 
 type RouteMatchers = {
   /**
@@ -267,7 +268,12 @@ export class DefaultRouteMatcherManager implements RouteMatcherManager {
         if (!match) continue
 
         // We found a match, so yield it and exit.
-        yield match
+        yield extendInvokedRouteMatch(
+          match,
+          // Attach the matched output pathname to the match to indicate that
+          // this match was created via a specific output.
+          normalized.options.matchedOutputPathname
+        )
 
         return null
       }

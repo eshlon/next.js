@@ -119,6 +119,9 @@ import { matchNextDataPathname } from './lib/match-next-data-pathname'
 import getRouteFromAssetPath from '../shared/lib/router/utils/get-route-from-asset-path'
 import { AppRouteDefinitionBuilder } from './future/route-matcher-providers/builders/app-route-definition-builder'
 import { isAppPageRouteDefinition } from './future/route-definitions/app-page-route-definition'
+import { isInvokedRouteMatch } from './future/route-matches/invoked-route-match'
+import { RouteMatch } from './future/route-matches/route-match'
+import { isAppRouteDefinition } from './future/route-definitions/app-route-definition'
 
 export type FindComponentsResult = {
   components: LoadComponentsReturnType
@@ -203,6 +206,7 @@ export interface BaseRequestHandler {
 export type RequestContext = {
   req: BaseNextRequest
   res: BaseNextResponse
+  match: RouteMatch | null
   pathname: string
   query: NextParsedUrlQuery
   renderOpts: RenderOptsPartial
@@ -896,7 +900,7 @@ export default abstract class Server<ServerOptions extends Options = Options> {
           let srcPathname = matchedPath
           const match = await this.matchers.match(matchedPath, {
             i18n: localeAnalysisResult,
-            // These requests do not use matched output.
+            // Not supported when running in minimal mode, no need to check.
             matchedOutputPathname: undefined,
           })
 
@@ -1422,12 +1426,21 @@ export default abstract class Server<ServerOptions extends Options = Options> {
     req: BaseNextRequest,
     res: BaseNextResponse,
     pathname: string,
-    query: NextParsedUrlQuery = {},
-    parsedUrl?: NextUrlWithParsedQuery,
-    internalRender = false
+    query: NextParsedUrlQuery | undefined,
+    parsedUrl: NextUrlWithParsedQuery | undefined,
+    internalRender = false,
+    match: RouteMatch | null = null
   ): Promise<void> {
     return getTracer().trace(BaseServerSpan.render, async () =>
-      this.renderImpl(req, res, pathname, query, parsedUrl, internalRender)
+      this.renderImpl(
+        req,
+        res,
+        pathname,
+        query,
+        parsedUrl,
+        internalRender,
+        match
+      )
     )
   }
 
@@ -1436,8 +1449,9 @@ export default abstract class Server<ServerOptions extends Options = Options> {
     res: BaseNextResponse,
     pathname: string,
     query: NextParsedUrlQuery = {},
-    parsedUrl?: NextUrlWithParsedQuery,
-    internalRender = false
+    parsedUrl: NextUrlWithParsedQuery | undefined,
+    internalRender = false,
+    match: RouteMatch | null
   ): Promise<void> {
     if (!pathname.startsWith('/')) {
       console.warn(
@@ -1478,6 +1492,7 @@ export default abstract class Server<ServerOptions extends Options = Options> {
       res,
       pathname,
       query,
+      match,
     })
   }
 
@@ -2466,18 +2481,21 @@ export default abstract class Server<ServerOptions extends Options = Options> {
     ctx: RequestContext,
     bubbleNoFallback: boolean
   ) {
-    const { query, pathname } = ctx
+    const { query, pathname, match } = ctx
 
-    const appRoute = this.appRoutes?.get(pathname) ?? null
-    const page = appRoute?.page ?? pathname
+    const definition =
+      match?.definition ?? this.appRoutes?.get(pathname) ?? null
+    const page = definition?.page ?? pathname
     const appPaths =
-      appRoute && isAppPageRouteDefinition(appRoute) ? appRoute.appPaths : null
+      definition && isAppPageRouteDefinition(definition)
+        ? definition.appPaths
+        : null
 
     const result = await this.findPageComponents({
       page,
       query,
       params: ctx.renderOpts.params || {},
-      isAppPath: appRoute !== null,
+      isAppPath: definition ? isAppRouteDefinition(definition) : false,
       sriEnabled: !!this.nextConfig.experimental.sri?.algorithm,
       appPaths,
       // Ensuring for loading page component routes is done via the matcher.
@@ -2518,7 +2536,7 @@ export default abstract class Server<ServerOptions extends Options = Options> {
   protected abstract getFallbackErrorComponents(): Promise<LoadComponentsReturnType | null>
   protected abstract getRoutesManifest(): NormalizedRouteManifest | undefined
 
-  private matchedOutputPathname(req: Pick<BaseNextRequest, 'headers'>) {
+  protected matchedOutputPathname(req: Pick<BaseNextRequest, 'headers'>) {
     if (this.minimalMode || !this.isRenderWorker) return undefined
 
     const matchedOutputPathname = req.headers['x-invoke-output']
@@ -2526,10 +2544,28 @@ export default abstract class Server<ServerOptions extends Options = Options> {
     if (typeof matchedOutputPathname !== 'string') return undefined
     if (matchedOutputPathname.length === 0) return undefined
 
-    // TODO: remove this requirement
-    if (!isDynamicRoute(matchedOutputPathname)) return undefined
-
     return matchedOutputPathname
+  }
+
+  private async renderMatch(
+    ctx: Omit<RequestContext, 'match'>,
+    match: RouteMatch,
+    bubbleNoFallback: boolean
+  ) {
+    return this.renderPageComponent(
+      {
+        ...ctx,
+        match,
+        // Use the overridden pathname if available, otherwise use the
+        // original pathname.
+        pathname: match.definition.pathname,
+        renderOpts: {
+          ...ctx.renderOpts,
+          params: match.params,
+        },
+      },
+      bubbleNoFallback
+    )
   }
 
   private async renderToResponseImpl(
@@ -2541,28 +2577,29 @@ export default abstract class Server<ServerOptions extends Options = Options> {
     delete query[NEXT_RSC_UNION_QUERY]
     delete query._nextBubbleNoFallback
 
-    const options: MatchOptions = {
-      i18n: this.i18nProvider?.fromQuery(pathname, query),
-      matchedOutputPathname: this.matchedOutputPathname(ctx.req),
-    }
-
     try {
-      for await (const match of this.matchers.matchAll(pathname, options)) {
-        const result = await this.renderPageComponent(
-          {
-            ...ctx,
-            // Use the overridden pathname if available, otherwise use the
-            // original pathname.
-            pathname:
-              match.definition.pathnameOverride || match.definition.pathname,
-            renderOpts: {
-              ...ctx.renderOpts,
-              params: match.params,
-            },
-          },
-          bubbleNoFallback
-        )
+      if (ctx.match && isInvokedRouteMatch(ctx.match)) {
+        const result = await this.renderMatch(ctx, ctx.match, bubbleNoFallback)
+
+        // If the result not false (implying it couldn't render it) we should
+        // return it.
         if (result !== false) return result
+
+        // Otherwise continue.
+      } else {
+        const options: MatchOptions = {
+          i18n: this.i18nProvider?.fromQuery(pathname, query),
+          matchedOutputPathname: this.matchedOutputPathname(ctx.req),
+        }
+
+        for await (const match of this.matchers.matchAll(pathname, options)) {
+          const result = await this.renderMatch(ctx, match, bubbleNoFallback)
+
+          // If we couldn't render the page component, we should continue.
+          if (result === false) continue
+
+          return result
+        }
       }
 
       // currently edge functions aren't receiving the x-matched-path
@@ -2571,9 +2608,16 @@ export default abstract class Server<ServerOptions extends Options = Options> {
       // the rewrite case
       // @ts-expect-error extended in child class web-server
       if (this.serverOptions.webServerConfig) {
-        // @ts-expect-error extended in child class web-server
-        ctx.pathname = this.serverOptions.webServerConfig.page
-        const result = await this.renderPageComponent(ctx, bubbleNoFallback)
+        const result = await this.renderPageComponent(
+          {
+            ...ctx,
+            // TODO: should construct match from available definition and pass down
+            match: null,
+            // @ts-expect-error extended in child class web-server
+            pathname: this.serverOptions.webServerConfig.page,
+          },
+          bubbleNoFallback
+        )
         if (result !== false) return result
       }
     } catch (error) {
@@ -2670,13 +2714,14 @@ export default abstract class Server<ServerOptions extends Options = Options> {
     req: BaseNextRequest,
     res: BaseNextResponse,
     pathname: string,
-    query: ParsedUrlQuery = {}
+    query: ParsedUrlQuery | undefined = {}
   ): Promise<string | null> {
     return this.getStaticHTML((ctx) => this.renderToResponse(ctx), {
       req,
       res,
       pathname,
       query,
+      match: null,
     })
   }
 
@@ -2716,7 +2761,7 @@ export default abstract class Server<ServerOptions extends Options = Options> {
         }
         return response
       },
-      { req, res, pathname, query }
+      { req, res, pathname, query, match: null }
     )
   }
 
@@ -2856,6 +2901,16 @@ export default abstract class Server<ServerOptions extends Options = Options> {
       }
 
       try {
+        // Update the match on the context.
+        if (result.components.routeModule) {
+          ctx.match = {
+            definition: result.components.routeModule.definition,
+            params: undefined,
+          }
+        } else {
+          ctx.match = null
+        }
+
         return await this.renderToResponseWithComponents(
           {
             ...ctx,
@@ -2883,6 +2938,11 @@ export default abstract class Server<ServerOptions extends Options = Options> {
       const fallbackComponents = await this.getFallbackErrorComponents()
 
       if (fallbackComponents) {
+        ctx.match = {
+          // We know that the fallback components have a route module.
+          definition: fallbackComponents.routeModule!.definition,
+          params: undefined,
+        }
         return this.renderToResponseWithComponents(
           {
             ...ctx,
@@ -2921,6 +2981,7 @@ export default abstract class Server<ServerOptions extends Options = Options> {
       res,
       pathname,
       query,
+      match: null,
     })
   }
 
