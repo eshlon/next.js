@@ -63,6 +63,7 @@ export function groupMatcherResults(
       // been duplicated.
       others.push(matcher)
       matcher.duplicated = others
+      matched.push(matcher)
     } else {
       // There was no match, so create a new array with the matcher in it.
       // Then add this array reference to the all map.

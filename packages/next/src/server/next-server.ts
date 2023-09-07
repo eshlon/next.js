@@ -845,10 +845,6 @@ export default class NextNodeServer extends BaseServer {
         return { finished: true }
       }
 
-      // Add the match to the request so we don't have to re-run the matcher
-      // for the same request.
-      addRequestMeta(req, '_nextMatch', match)
-
       // TODO-APP: move this to a route handler
       const edgeFunctionsPages = this.getEdgeFunctionsPages()
       for (const edgeFunctionsPage of edgeFunctionsPages) {

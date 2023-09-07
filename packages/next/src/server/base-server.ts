@@ -68,11 +68,7 @@ import * as Log from '../build/output/log'
 import escapePathDelimiters from '../shared/lib/router/utils/escape-path-delimiters'
 import { getUtils } from './server-utils'
 import isError, { getProperError } from '../lib/is-error'
-import {
-  addRequestMeta,
-  getRequestMeta,
-  removeRequestMeta,
-} from './request-meta'
+import { addRequestMeta, getRequestMeta } from './request-meta'
 
 import { ImageConfigComplete } from '../shared/lib/image-config'
 import { removePathPrefix } from '../shared/lib/router/utils/remove-path-prefix'
@@ -618,13 +614,11 @@ export default abstract class Server<ServerOptions extends Options = Options> {
     return { finished: false }
   }
 
-  protected async handleCatchallRenderRequest(
-    _req: BaseNextRequest,
-    _res: BaseNextResponse,
-    _parsedUrl: NextUrlWithParsedQuery
-  ): Promise<{ finished: boolean }> {
-    return { finished: false }
-  }
+  protected abstract handleCatchallRenderRequest(
+    req: BaseNextRequest,
+    res: BaseNextResponse,
+    parsedUrl: NextUrlWithParsedQuery
+  ): Promise<{ finished: boolean }>
 
   protected async handleCatchallMiddlewareRequest(
     _req: BaseNextRequest,
@@ -902,6 +896,7 @@ export default abstract class Server<ServerOptions extends Options = Options> {
           let srcPathname = matchedPath
           const match = await this.matchers.match(matchedPath, {
             i18n: localeAnalysisResult,
+            // These requests do not use matched output.
             matchedOutputPathname: undefined,
           })
 
@@ -2523,6 +2518,20 @@ export default abstract class Server<ServerOptions extends Options = Options> {
   protected abstract getFallbackErrorComponents(): Promise<LoadComponentsReturnType | null>
   protected abstract getRoutesManifest(): NormalizedRouteManifest | undefined
 
+  private matchedOutputPathname(req: Pick<BaseNextRequest, 'headers'>) {
+    if (this.minimalMode || !this.isRenderWorker) return undefined
+
+    const matchedOutputPathname = req.headers['x-invoke-output']
+
+    if (typeof matchedOutputPathname !== 'string') return undefined
+    if (matchedOutputPathname.length === 0) return undefined
+
+    // TODO: remove this requirement
+    if (!isDynamicRoute(matchedOutputPathname)) return undefined
+
+    return matchedOutputPathname
+  }
+
   private async renderToResponseImpl(
     ctx: RequestContext
   ): Promise<ResponsePayload | null> {
@@ -2532,19 +2541,9 @@ export default abstract class Server<ServerOptions extends Options = Options> {
     delete query[NEXT_RSC_UNION_QUERY]
     delete query._nextBubbleNoFallback
 
-    // when a specific invoke-output is meant to be matched
-    // ensure a prior dynamic route/page doesn't take priority
-    const invokeOutput = ctx.req.headers['x-invoke-output']
-    const matchedOutputPathname =
-      !this.minimalMode &&
-      this.isRenderWorker &&
-      typeof invokeOutput === 'string'
-        ? invokeOutput
-        : undefined
-
     const options: MatchOptions = {
       i18n: this.i18nProvider?.fromQuery(pathname, query),
-      matchedOutputPathname,
+      matchedOutputPathname: this.matchedOutputPathname(ctx.req),
     }
 
     try {
@@ -2856,17 +2855,6 @@ export default abstract class Server<ServerOptions extends Options = Options> {
         )
       }
 
-      // If the page has a route module, use it for the new match. If it doesn't
-      // have a route module, remove the match.
-      if (result.components.routeModule) {
-        addRequestMeta(ctx.req, '_nextMatch', {
-          definition: result.components.routeModule.definition,
-          params: undefined,
-        })
-      } else {
-        removeRequestMeta(ctx.req, '_nextMatch')
-      }
-
       try {
         return await this.renderToResponseWithComponents(
           {
@@ -2895,13 +2883,6 @@ export default abstract class Server<ServerOptions extends Options = Options> {
       const fallbackComponents = await this.getFallbackErrorComponents()
 
       if (fallbackComponents) {
-        // There was an error, so use it's definition from the route module
-        // to add the match to the request.
-        addRequestMeta(ctx.req, '_nextMatch', {
-          definition: fallbackComponents.routeModule!.definition,
-          params: undefined,
-        })
-
         return this.renderToResponseWithComponents(
           {
             ...ctx,
