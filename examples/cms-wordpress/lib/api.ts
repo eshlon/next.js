@@ -1,13 +1,13 @@
 const API_URL = process.env.WORDPRESS_API_URL
 
 async function fetchAPI(query = '', { variables }: Record<string, any> = {}) {
-  const headers = { 'Content-Type': 'application/json' }
+  const headers = {
+  'Content-Type': 'application/json',
+  ...(process.env.WORDPRESS_AUTH_REFRESH_TOKEN
+    ? { 'Authorization': `Bearer ${process.env.WORDPRESS_AUTH_REFRESH_TOKEN}` }
+    : {}),
+};
 
-  if (process.env.WORDPRESS_AUTH_REFRESH_TOKEN) {
-    headers[
-      'Authorization'
-    ] = `Bearer ${process.env.WORDPRESS_AUTH_REFRESH_TOKEN}`
-  }
 
   // WPGraphQL Plugin must be enabled
   const res = await fetch(API_URL, {
